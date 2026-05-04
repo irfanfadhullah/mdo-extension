@@ -1,0 +1,109 @@
+{
+  "name": "mdo-vscode",
+  "displayName": "MDO Markdown Object",
+  "description": "Create, read, preview, and extract single-file Markdown Object .mdo documents with images, GIF, video, audio, and attachments.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization",
+    "Notebooks"
+  ],
+  "activationEvents": [
+    "onCustomEditor:mdo.viewer",
+    "onCommand:mdo.createFromMarkdown",
+    "onCommand:mdo.extract",
+    "onCommand:mdo.preview",
+    "onCommand:mdo.new"
+  ],
+  "main": "dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "mdo.viewer",
+        "displayName": "MDO Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.mdo"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "mdo.createFromMarkdown",
+        "title": "MDO: Import Markdown into MDO"
+      },
+      {
+        "command": "mdo.new",
+        "title": "MDO: New Editable MDO"
+      },
+      {
+        "command": "mdo.extract",
+        "title": "MDO: Extract MDO"
+      },
+      {
+        "command": "mdo.preview",
+        "title": "MDO: Open MDO Preview"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "mdo.createFromMarkdown",
+          "when": "resourceExtname == .md || resourceExtname == .markdown",
+          "group": "navigation"
+        },
+        {
+          "command": "mdo.preview",
+          "when": "resourceExtname == .mdo",
+          "group": "navigation"
+        },
+        {
+          "command": "mdo.extract",
+          "when": "resourceExtname == .mdo",
+          "group": "navigation"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "mdo.createFromMarkdown",
+          "when": "resourceExtname == .md || resourceExtname == .markdown",
+          "group": "navigation"
+        },
+        {
+          "command": "mdo.preview",
+          "when": "resourceExtname == .mdo",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs --sourcemap",
+    "chrome:build": "esbuild chrome/src/background.ts --bundle --outfile=chrome/dist/background.js --platform=browser --format=iife --target=chrome120 --sourcemap && esbuild chrome/src/content.ts --bundle --outfile=chrome/dist/content.js --platform=browser --format=iife --target=chrome120 --sourcemap && esbuild chrome/src/popup.ts --bundle --outfile=chrome/dist/popup.js --platform=browser --format=iife --target=chrome120 --sourcemap",
+    "package-vsix": "vsce package --allow-missing-repository --no-dependencies --ignoreFile .vscodeignore"
+  },
+  "dependencies": {
+    "@types/turndown": "^5.0.6",
+    "jszip": "^3.10.1",
+    "marked": "^12.0.2",
+    "pdfjs-dist": "^5.6.205",
+    "turndown": "^7.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.26.1",
+    "esbuild": "^0.20.2",
+    "typescript": "^5.4.2"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "MDO Capture",
+  "version": "0.1.0",
+  "description": "Capture the current web page or PDF tab into an .mdo archive with packaged media.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Capture tab as MDO"
+  },
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dist/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
