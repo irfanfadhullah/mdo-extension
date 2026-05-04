@@ -1,4 +1,4 @@
-# MDO Markdown Object VS Code Extension
+# MDO Markdown Object Downloader for Chrome and Viewer for VS Code Extension
 
 This extension reads and writes `.mdo` files.
 
