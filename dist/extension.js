@@ -12438,6 +12438,10 @@ var MdoCustomEditorProvider = class {
       }
       if (message.type === "revert") {
         await this.revertCustomDocument(document, new vscode.CancellationTokenSource().token);
+        return;
+      }
+      if (message.type === "openLink") {
+        await openPreviewLink(document, message.href);
       }
     });
     webviewPanel.onDidDispose(() => {
@@ -12453,6 +12457,8 @@ var MdoCustomEditorProvider = class {
     await postEditorState(document);
   }
   async saveCustomDocumentAs(document, destination, _cancellation) {
+    const previousUri = document.uri;
+    const previousManifest = document.manifest;
     const currentDefaultTitle = getDefaultMdoTitle(document.uri);
     if (document.manifest.title === currentDefaultTitle) {
       document.manifest = {
@@ -12460,11 +12466,17 @@ var MdoCustomEditorProvider = class {
         title: getDefaultMdoTitle(destination)
       };
     }
-    document.uri = destination;
-    const manifest = await saveMdoDocument(document, destination);
-    document.manifest = manifest;
-    document.dirty = false;
-    await postEditorState(document);
+    try {
+      const manifest = await saveMdoDocument(document, destination);
+      document.uri = destination;
+      document.manifest = manifest;
+      document.dirty = false;
+      await postEditorState(document);
+    } catch (error) {
+      document.uri = previousUri;
+      document.manifest = previousManifest;
+      throw error;
+    }
   }
   async revertCustomDocument(document, _cancellation) {
     try {
@@ -12940,6 +12952,10 @@ preview.addEventListener("click", (event) => {
   }
 
   event.preventDefault();
+  vscode.postMessage({
+    type: "openLink",
+    href: anchor.getAttribute("href") || anchor.href || ""
+  });
 });
 
 saveBtn.addEventListener("click", () => vscode.postMessage({ type: "save" }));
@@ -13602,11 +13618,11 @@ function sha256(data) {
 async function extractZipToFolder(zip, outputDir) {
   const entries = Object.values(zip.files);
   for (const entry of entries) {
+    const dest = safeJoin(outputDir, entry.name);
     if (entry.dir) {
-      await fs.mkdir(path.join(outputDir, entry.name), { recursive: true });
+      await fs.mkdir(dest, { recursive: true });
       continue;
     }
-    const dest = safeJoin(outputDir, entry.name);
     await fs.mkdir(path.dirname(dest), { recursive: true });
     const data = await entry.async("nodebuffer");
     await fs.writeFile(dest, data);
@@ -13620,6 +13636,18 @@ function safeJoin(base, target) {
     throw new Error(`Unsafe zip path blocked: ${target}`);
   }
   return targetPath;
+}
+async function openPreviewLink(document, href) {
+  const target = href.trim();
+  if (!target) {
+    return;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) {
+    await vscode.env.openExternal(vscode.Uri.parse(target, true));
+    return;
+  }
+  const filePath = safeJoin(document.workingDir, stripUrlSuffix(target));
+  await vscode.env.openExternal(vscode.Uri.file(filePath));
 }
 async function buildPreviewHtml(webview, extractDir, mdText) {
   const transformed = await markdownLinksToEmbeds(mdText, extractDir);

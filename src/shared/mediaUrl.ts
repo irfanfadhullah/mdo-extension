@@ -47,3 +47,36 @@ export function normalizeMediaReference(value: string): string {
   const embedded = extractEmbeddedHttpUrl(clean);
   return stripSyntheticMediaVariantSuffix((embedded || clean).replace(/\\/g, "/"));
 }
+
+export function normalizeRemoteMediaUrl(value: string): string {
+  const raw = value.trim();
+  const candidates = [raw];
+
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (decoded !== raw) {
+      candidates.push(decoded);
+    }
+  } catch {
+    // Keep the raw value when decoding fails.
+  }
+
+  for (const candidate of candidates) {
+    const embedded = extractEmbeddedHttpUrl(candidate) || candidate;
+
+    try {
+      const parsed = new URL(embedded);
+      parsed.pathname = stripSyntheticMediaVariantSuffix(parsed.pathname).replace(/\\/g, "/");
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      // Try the next candidate or the fallback below.
+    }
+  }
+
+  const fallback = (extractEmbeddedHttpUrl(candidates[candidates.length - 1]) || candidates[candidates.length - 1])
+    .replace(/\\/g, "/")
+    .replace(/#.*$/, "");
+
+  return stripSyntheticMediaVariantSuffix(fallback);
+}

@@ -12,10 +12,20 @@
   },
   "permissions": [
     "activeTab",
+    "contextMenus",
     "downloads",
     "scripting",
+    "storage",
     "tabs"
   ],
+  "commands": {
+    "capture-default": {
+      "suggested_key": {
+        "default": "Alt+Shift+M"
+      },
+      "description": "Capture the active tab as MDO"
+    }
+  },
   "host_permissions": [
     "<all_urls>"
   ],

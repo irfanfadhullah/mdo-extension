@@ -696,32 +696,31 @@
     }
     return "";
   }
-  function stripUrlDecorations(value) {
-    let clean = value.trim();
-    const hashIndex = clean.indexOf("#");
-    if (hashIndex >= 0) {
-      clean = clean.slice(0, hashIndex);
-    }
-    const queryIndex = clean.indexOf("?");
-    if (queryIndex >= 0) {
-      clean = clean.slice(0, queryIndex);
-    }
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-    }
-    if (clean.startsWith("file://")) {
-      clean = clean.replace("file://", "");
-    }
-    return clean;
-  }
   function stripSyntheticMediaVariantSuffix(value) {
     return value.replace(MEDIA_VARIANT_SUFFIX_RE, (_match, ext) => `.${ext}`);
   }
-  function normalizeMediaReference(value) {
-    const clean = stripUrlDecorations(value);
-    const embedded = extractEmbeddedHttpUrl(clean);
-    return stripSyntheticMediaVariantSuffix((embedded || clean).replace(/\\/g, "/"));
+  function normalizeRemoteMediaUrl(value) {
+    const raw = value.trim();
+    const candidates = [raw];
+    try {
+      const decoded = decodeURIComponent(raw);
+      if (decoded !== raw) {
+        candidates.push(decoded);
+      }
+    } catch {
+    }
+    for (const candidate of candidates) {
+      const embedded = extractEmbeddedHttpUrl(candidate) || candidate;
+      try {
+        const parsed = new URL(embedded);
+        parsed.pathname = stripSyntheticMediaVariantSuffix(parsed.pathname).replace(/\\/g, "/");
+        parsed.hash = "";
+        return parsed.toString();
+      } catch {
+      }
+    }
+    const fallback = (extractEmbeddedHttpUrl(candidates[candidates.length - 1]) || candidates[candidates.length - 1]).replace(/\\/g, "/").replace(/#.*$/, "");
+    return stripSyntheticMediaVariantSuffix(fallback);
   }
 
   // src/shared/markdownCleanup.ts
@@ -749,12 +748,12 @@
       if (!message || message.type !== "mdo:capture") {
         return;
       }
-      Promise.resolve().then(() => captureSnapshot()).then((snapshot) => sendResponse({ ok: true, snapshot })).catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+      Promise.resolve().then(() => captureSnapshot(message.captureMode || "article")).then((snapshot) => sendResponse({ ok: true, snapshot })).catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
       return true;
     });
   }
-  function captureSnapshot() {
-    const root2 = selectCaptureRoot();
+  function captureSnapshot(captureMode) {
+    const { root: root2, captureModeUsed } = selectCaptureRoot(captureMode);
     const clone = root2.cloneNode(true);
     const resources = [];
     const seen = /* @__PURE__ */ new Set();
@@ -782,17 +781,40 @@
       seen.add(cleaned);
       return `${PLACEHOLDER_PREFIX}${id}`;
     });
-    const fragmentHtml = root2.tagName.toLowerCase() === "body" ? clone.innerHTML : clone.outerHTML;
+    const fragmentHtml = getCaptureFragmentHtml(clone, captureModeUsed);
     const markdown = htmlToMarkdown(fragmentHtml);
     return {
       kind: "webpage",
+      captureModeUsed,
       title: document.title || location.hostname || "Captured page",
       sourceUrl: location.href,
       markdown,
       resources
     };
   }
-  function selectCaptureRoot() {
+  function selectCaptureRoot(captureMode) {
+    if (captureMode === "selection") {
+      const selectionRoot = buildSelectionRoot();
+      if (selectionRoot) {
+        return {
+          root: selectionRoot,
+          captureModeUsed: "selection"
+        };
+      }
+      captureMode = "article";
+    }
+    if (captureMode === "full") {
+      return {
+        root: document.body || document.documentElement,
+        captureModeUsed: "full"
+      };
+    }
+    return {
+      root: selectArticleRoot(),
+      captureModeUsed: "article"
+    };
+  }
+  function selectArticleRoot() {
     const candidates = [
       document.querySelector("article"),
       document.querySelector("main"),
@@ -803,6 +825,31 @@
       return candidates[0];
     }
     return document.documentElement;
+  }
+  function buildSelectionRoot() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return null;
+    }
+    const container = document.createElement("div");
+    for (let i = 0; i < selection.rangeCount; i += 1) {
+      const fragment = selection.getRangeAt(i).cloneContents();
+      if (!fragment.hasChildNodes()) {
+        continue;
+      }
+      container.append(fragment);
+    }
+    const text = container.textContent?.replace(/\s+/g, " ").trim() || "";
+    if (!text && !container.querySelector("img, video, audio, a, svg, table, figure, pre, code")) {
+      return null;
+    }
+    return container;
+  }
+  function getCaptureFragmentHtml(root2, captureModeUsed) {
+    if (captureModeUsed === "selection") {
+      return root2.innerHTML;
+    }
+    return root2.tagName.toLowerCase() === "body" ? root2.innerHTML : root2.outerHTML;
   }
   function removeNoiseNodes(root2) {
     const selectors = [
@@ -1138,7 +1185,7 @@
     }
   }
   function normalizeCapturedUrl(value) {
-    return normalizeMediaReference(resolveUrl(value));
+    return normalizeRemoteMediaUrl(resolveUrl(value));
   }
   function isIgnoredScheme(value) {
     const lower = value.trim().toLowerCase();

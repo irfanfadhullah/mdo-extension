@@ -48,6 +48,37 @@
       line-height: 1.5;
     }
 
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    input,
+    select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }
+
+    input:focus,
+    select:focus,
+    button:focus {
+      outline: 2px solid rgba(245, 245, 245, 0.35);
+      outline-offset: 2px;
+    }
+
     button {
       border: 0;
       border-radius: 10px;
@@ -92,12 +123,25 @@
   <div class="wrap">
     <div>
       <h1>Capture active tab as MDO</h1>
-      <p>Web pages are saved with packaged media. PDF tabs are saved with the PDF attached.</p>
+      <p>Capture the current page with a clipper-style mode selector, then save a packaged `.mdo` file.</p>
     </div>
-    <button id="captureBtn" type="button">Capture and Save</button>
+    <label class="field" for="titleInput">
+      <span class="label">Title</span>
+      <input id="titleInput" type="text" autocomplete="off" spellcheck="false" placeholder="Use the page title">
+    </label>
+    <label class="field" for="captureMode">
+      <span class="label">Capture mode</span>
+      <select id="captureMode">
+        <option value="selection">Selection first</option>
+        <option value="article">Article</option>
+        <option value="full">Full page</option>
+      </select>
+    </label>
+    <p>Selection mode falls back to article capture when nothing is highlighted.</p>
+    <button id="captureBtn" type="button">Save as MDO</button>
     <div id="status" class="status"></div>
     <div class="footer">
-      The resulting file opens in the VS Code MDO editor.
+      Right-click pages for quick capture, or use <code>Alt+Shift+M</code> for the last-used mode.
     </div>
   </div>
   <script src="./dist/popup.js"></script>

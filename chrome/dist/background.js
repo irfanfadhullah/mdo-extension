@@ -33841,6 +33841,29 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     const embedded = extractEmbeddedHttpUrl(clean);
     return stripSyntheticMediaVariantSuffix((embedded || clean).replace(/\\/g, "/"));
   }
+  function normalizeRemoteMediaUrl(value) {
+    const raw = value.trim();
+    const candidates = [raw];
+    try {
+      const decoded = decodeURIComponent(raw);
+      if (decoded !== raw) {
+        candidates.push(decoded);
+      }
+    } catch {
+    }
+    for (const candidate of candidates) {
+      const embedded = extractEmbeddedHttpUrl(candidate) || candidate;
+      try {
+        const parsed = new URL(embedded);
+        parsed.pathname = stripSyntheticMediaVariantSuffix(parsed.pathname).replace(/\\/g, "/");
+        parsed.hash = "";
+        return parsed.toString();
+      } catch {
+      }
+    }
+    const fallback = (extractEmbeddedHttpUrl(candidates[candidates.length - 1]) || candidates[candidates.length - 1]).replace(/\\/g, "/").replace(/#.*$/, "");
+    return stripSyntheticMediaVariantSuffix(fallback);
+  }
 
   // src/shared/mdoMetadata.ts
   var MDO_METADATA_VERSION = "1.0";
@@ -34075,28 +34098,63 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
   var MANIFEST_NAME = "manifest.json";
   var METADATA_NAME = MDO_METADATA_NAME;
   var PLACEHOLDER_PREFIX = "mdo-resource://";
+  var DEFAULT_CAPTURE_MODE = "article";
+  var CAPTURE_MODE_STORAGE_KEY = "mdo.captureMode";
+  var CONTEXT_MENU_CAPTURE_SELECTION = "mdo.capture-selection";
+  var CONTEXT_MENU_CAPTURE_ARTICLE = "mdo.capture-article";
+  var CONTEXT_MENU_CAPTURE_FULL = "mdo.capture-full";
+  var CAPTURE_COMMAND_ID = "capture-default";
   var IMAGE_EXTS = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp", ".tiff", ".tif"]);
   var VIDEO_EXTS = /* @__PURE__ */ new Set([".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv", ".ogv"]);
   var AUDIO_EXTS = /* @__PURE__ */ new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"]);
+  chrome.runtime.onInstalled.addListener(() => {
+    void ensureContextMenus();
+  });
+  chrome.contextMenus.onClicked.addListener((info2, tab) => {
+    const captureMode = getCaptureModeForMenuItem(info2.menuItemId);
+    if (!captureMode) {
+      return;
+    }
+    void handleCaptureActiveTab({ captureMode, tab }).catch((err) => {
+      console.error("Failed to capture from context menu", err);
+    });
+  });
+  chrome.commands.onCommand.addListener((command) => {
+    if (command !== CAPTURE_COMMAND_ID) {
+      return;
+    }
+    void getStoredCaptureMode().then((captureMode) => handleCaptureActiveTab({ captureMode })).catch((err) => {
+      console.error("Failed to capture from keyboard shortcut", err);
+    });
+  });
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || message.type !== "mdo:capture-active-tab") {
       return;
     }
-    void handleCaptureActiveTab().then((result) => sendResponse({ ok: true, result })).catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+    void handleCaptureActiveTab({
+      captureMode: message.captureMode,
+      title: message.title
+    }).then((result) => sendResponse({ ok: true, result })).catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
     return true;
   });
-  async function handleCaptureActiveTab() {
-    const tab = await getActiveTab();
+  async function handleCaptureActiveTab(options = {}) {
+    const tab = options.tab || await getActiveTab();
     if (!tab.id) {
       throw new Error("No active tab found.");
     }
-    const snapshot = await captureTab(tab);
+    const captureMode = options.captureMode || await getStoredCaptureMode();
+    await setStoredCaptureMode(captureMode);
+    const snapshot = applyCaptureTitle(await captureTab(tab, captureMode), options.title);
     const { blob, manifest } = await buildMdoArchive(snapshot);
     const filename = sanitizeFilename(snapshot.title || "captured-page") + ".mdo";
     await downloadBlob(blob, filename);
-    return { filename, manifest };
+    return {
+      filename,
+      manifest,
+      captureModeUsed: snapshot.captureModeUsed
+    };
   }
-  async function captureTab(tab) {
+  async function captureTab(tab, captureMode) {
     const pdfUrl = getPdfSourceUrl(tab);
     if (pdfUrl) {
       return await capturePdfTab(tab, pdfUrl);
@@ -34104,7 +34162,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     if (typeof tab.id !== "number") {
       throw new Error("No active tab found.");
     }
-    const firstAttempt = await captureSnapshotFromTab(tab.id);
+    const firstAttempt = await captureSnapshotFromTab(tab.id, captureMode);
     if (firstAttempt) {
       return firstAttempt;
     }
@@ -34112,7 +34170,7 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
       await ensureCaptureContentScript(tab.id);
     } catch {
     }
-    const retry = await captureSnapshotFromTab(tab.id);
+    const retry = await captureSnapshotFromTab(tab.id, captureMode);
     if (retry) {
       return retry;
     }
@@ -34128,15 +34186,16 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     const pdfBytes = new Uint8Array(await response.arrayBuffer());
     return {
       kind: "pdf",
+      captureModeUsed: "pdf",
       title,
       sourceUrl,
       pdfBytes,
       pdfFilename
     };
   }
-  async function captureSnapshotFromTab(tabId) {
+  async function captureSnapshotFromTab(tabId, captureMode) {
     try {
-      const response = await chrome.tabs.sendMessage(tabId, { type: "mdo:capture" });
+      const response = await chrome.tabs.sendMessage(tabId, { type: "mdo:capture", captureMode });
       if (response?.ok && response.snapshot) {
         return response.snapshot;
       }
@@ -34379,6 +34438,16 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
       "",
       fragmentMarkdown.trim()
     ].join("\n");
+  }
+  function applyCaptureTitle(snapshot, titleOverride) {
+    const title = sanitizeTitle(titleOverride || "");
+    if (!title) {
+      return snapshot;
+    }
+    return {
+      ...snapshot,
+      title
+    };
   }
   async function extractPdfPages(pdfBytes) {
     const pdfjs = await Promise.resolve().then(() => (init_pdf(), pdf_exports));
@@ -34657,26 +34726,47 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     return Array.from(new Set(values.filter(Boolean)));
   }
   function normalizeResourceUrl(ref) {
-    let clean = ref.trim();
-    const hashIndex = clean.indexOf("#");
-    if (hashIndex >= 0) {
-      clean = clean.slice(0, hashIndex);
+    return normalizeRemoteMediaUrl(ref);
+  }
+  function getCaptureModeForMenuItem(menuItemId) {
+    if (menuItemId === CONTEXT_MENU_CAPTURE_SELECTION) {
+      return "selection";
     }
-    const queryIndex = clean.indexOf("?");
-    if (queryIndex >= 0) {
-      clean = clean.slice(0, queryIndex);
+    if (menuItemId === CONTEXT_MENU_CAPTURE_ARTICLE) {
+      return "article";
     }
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
+    if (menuItemId === CONTEXT_MENU_CAPTURE_FULL) {
+      return "full";
     }
-    const httpsIndex = clean.lastIndexOf("https://");
-    const httpIndex = clean.lastIndexOf("http://");
-    const embeddedIndex = Math.max(httpsIndex, httpIndex);
-    if (embeddedIndex >= 0) {
-      clean = clean.slice(embeddedIndex);
-    }
-    return normalizeMediaReference(clean);
+    return null;
+  }
+  async function ensureContextMenus() {
+    await chrome.contextMenus.removeAll();
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_CAPTURE_SELECTION,
+      title: "Capture selection as MDO",
+      contexts: ["selection"]
+    });
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_CAPTURE_ARTICLE,
+      title: "Capture article as MDO",
+      contexts: ["page"]
+    });
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_CAPTURE_FULL,
+      title: "Capture full page as MDO",
+      contexts: ["page"]
+    });
+  }
+  async function getStoredCaptureMode() {
+    const stored = await chrome.storage.local.get(CAPTURE_MODE_STORAGE_KEY);
+    return isCaptureMode(stored[CAPTURE_MODE_STORAGE_KEY]) ? stored[CAPTURE_MODE_STORAGE_KEY] : DEFAULT_CAPTURE_MODE;
+  }
+  async function setStoredCaptureMode(captureMode) {
+    await chrome.storage.local.set({ [CAPTURE_MODE_STORAGE_KEY]: captureMode });
+  }
+  function isCaptureMode(value) {
+    return value === "selection" || value === "article" || value === "full";
   }
   async function sha256(bytes) {
     const digest = await crypto.subtle.digest("SHA-256", bytes);

@@ -1,7 +1,8 @@
 import TurndownService from "turndown";
-import { normalizeMediaReference, stripSyntheticMediaVariantSuffix } from "../../src/shared/mediaUrl";
+import { normalizeRemoteMediaUrl, stripSyntheticMediaVariantSuffix } from "../../src/shared/mediaUrl";
 import { collapseLinkedMediaWrappers } from "../../src/shared/markdownCleanup";
 
+type CaptureMode = "selection" | "article" | "full";
 type ResourceKind = "image" | "video" | "audio" | "attachment";
 
 type ResourceSpec = {
@@ -14,6 +15,7 @@ type ResourceSpec = {
 
 type CaptureSnapshot = {
   kind: "webpage";
+  captureModeUsed: CaptureMode;
   title: string;
   sourceUrl: string;
   markdown: string;
@@ -22,6 +24,7 @@ type CaptureSnapshot = {
 
 type CaptureRequest = {
   type: "mdo:capture";
+  captureMode?: CaptureMode;
 };
 
 type CaptureResponse =
@@ -61,7 +64,7 @@ if (!captureGlobal.__mdoCaptureListenerInstalled) {
     }
 
     Promise.resolve()
-      .then(() => captureSnapshot())
+      .then(() => captureSnapshot(message.captureMode || "article"))
       .then((snapshot) => sendResponse({ ok: true, snapshot } satisfies CaptureResponse))
       .catch((err: any) => sendResponse({ ok: false, error: err?.message || String(err) } satisfies CaptureResponse));
 
@@ -69,8 +72,8 @@ if (!captureGlobal.__mdoCaptureListenerInstalled) {
   });
 }
 
-function captureSnapshot(): CaptureSnapshot {
-  const root = selectCaptureRoot();
+function captureSnapshot(captureMode: CaptureMode): CaptureSnapshot {
+  const { root, captureModeUsed } = selectCaptureRoot(captureMode);
   const clone = root.cloneNode(true) as HTMLElement;
   const resources: ResourceSpec[] = [];
   const seen = new Set<string>();
@@ -102,10 +105,11 @@ function captureSnapshot(): CaptureSnapshot {
     return `${PLACEHOLDER_PREFIX}${id}`;
   });
 
-  const fragmentHtml = root.tagName.toLowerCase() === "body" ? clone.innerHTML : clone.outerHTML;
+  const fragmentHtml = getCaptureFragmentHtml(clone, captureModeUsed);
   const markdown = htmlToMarkdown(fragmentHtml);
   return {
     kind: "webpage",
+    captureModeUsed,
     title: document.title || location.hostname || "Captured page",
     sourceUrl: location.href,
     markdown,
@@ -113,7 +117,33 @@ function captureSnapshot(): CaptureSnapshot {
   };
 }
 
-function selectCaptureRoot(): HTMLElement {
+function selectCaptureRoot(captureMode: CaptureMode): { root: HTMLElement; captureModeUsed: CaptureMode } {
+  if (captureMode === "selection") {
+    const selectionRoot = buildSelectionRoot();
+    if (selectionRoot) {
+      return {
+        root: selectionRoot,
+        captureModeUsed: "selection"
+      };
+    }
+
+    captureMode = "article";
+  }
+
+  if (captureMode === "full") {
+    return {
+      root: document.body || document.documentElement,
+      captureModeUsed: "full"
+    };
+  }
+
+  return {
+    root: selectArticleRoot(),
+    captureModeUsed: "article"
+  };
+}
+
+function selectArticleRoot(): HTMLElement {
   const candidates = [
     document.querySelector("article"),
     document.querySelector("main"),
@@ -126,6 +156,38 @@ function selectCaptureRoot(): HTMLElement {
   }
 
   return document.documentElement;
+}
+
+function buildSelectionRoot(): HTMLElement | null {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return null;
+  }
+
+  const container = document.createElement("div");
+  for (let i = 0; i < selection.rangeCount; i += 1) {
+    const fragment = selection.getRangeAt(i).cloneContents();
+    if (!fragment.hasChildNodes()) {
+      continue;
+    }
+
+    container.append(fragment);
+  }
+
+  const text = container.textContent?.replace(/\s+/g, " ").trim() || "";
+  if (!text && !container.querySelector("img, video, audio, a, svg, table, figure, pre, code")) {
+    return null;
+  }
+
+  return container;
+}
+
+function getCaptureFragmentHtml(root: HTMLElement, captureModeUsed: CaptureMode): string {
+  if (captureModeUsed === "selection") {
+    return root.innerHTML;
+  }
+
+  return root.tagName.toLowerCase() === "body" ? root.innerHTML : root.outerHTML;
 }
 
 function removeNoiseNodes(root: HTMLElement): void {
@@ -536,7 +598,7 @@ function resolveUrl(value: string): string {
 }
 
 function normalizeCapturedUrl(value: string): string {
-  return normalizeMediaReference(resolveUrl(value));
+  return normalizeRemoteMediaUrl(resolveUrl(value));
 }
 
 function isIgnoredScheme(value: string): boolean {
